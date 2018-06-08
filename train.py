@@ -11,6 +11,7 @@ import time
 
 import yaml
 import torch
+from torch.autograd import Variable
 import torch.optim as optim
 from torchvision import transforms
 from torch.utils.data import DataLoader
@@ -60,22 +61,77 @@ def cuda_mode(args):
     return cuda, num_gpus
 
 
+def adjust_learning_rate(optimizer, batch, lr, batch_size, config):
+    """Set the learning rate to the initial LR decayed by 10 every 30 epochs"""
+
+    steps = config['lr_change_steps']
+    scales = config['lr_change_scales']
+
+    for i in range(len(steps)):
+        scale = scales[i] if i < len(scales) else 1
+        if batch >= steps[i]:
+            lr = lr * scale
+            if batch == steps[i]:
+                break
+        else:
+            break
+    for param_group in optimizer.param_groups:
+        param_group['lr'] = lr / batch_size
+
+    return lr
+
+
+def train(model, epoch, train_loader, optimizer, opt, config, pro_bs,
+          save_dir, save_interval):
+    """Train the model"""
+
+    lr = adjust_learning_rate(optimizer, pro_bs, opt.lr, opt.bs, config)
+    print('epoch {}, processed {} samples, lr {}'.format(
+        epoch, epoch * len(train_loader.dataset), lr))
+    model.train()
+
+    for batch_idx, (data, target) in enumerate(train_loader):
+        adjust_learning_rate(optimizer, pro_bs, opt.lr, opt.bs, config)
+        pro_bs += 1
+
+        data = data.cuda()
+        data, target = Variable(data), Variable(target)
+        optimizer.zero_grad()
+        loss = model(data)
+        loss.backward()
+        optimizer.step()
+
+        # Save the trained model
+        if (epoch + 1) % save_interval == 0:
+            save_name = os.path.join(
+                save_dir, 'darknet19_{}.pth'.format(epoch + 1))
+            torch.save(model.state_dict(), save_name)
+
+    return pro_bs
+
+
 @clock_non_return
 def main():
 
     opt = parse_args()
     use_cuda, num_gpus = cuda_mode(opt)
+    with open('config.yml', 'r') as f:
+        config = yaml.load(f)
+
+    data_dir = opt.data_dir
+    anno_dir = os.path.join(data_dir, 'annotations_cache')
 
     train_list = '2012_train.txt'
     test_list = '2007_test.txt'
+    train_list_path = os.path.join(anno_dir, train_list)
+    test_list_path = os.path.join(anno_dir, test_list)
+
     num_samples = 5717
-    num_workers = 10
+    num_workers = config['train_num_workers']
     batch_size = opt.bs
     lr = opt.lr
-    momentum = 0.9
-    decay = 0.0005
-    steps = [-1, 500, 40000, 60000]
-    scales = [0.1, 10., 0.1, 0.1]
+    momentum = config['momentum']
+    decay = config['decay']
 
     # Training parameters
     max_epochs = opt.epochs
@@ -105,8 +161,9 @@ def main():
 
     kwargs = {'num_workers': num_workers, 'pin_memory': True} \
         if use_cuda else {}
+
     test_loader = DataLoader(dataset.listDataset(
-        test_list, shape=(init_width, init_height), shuffle=False,
+        test_list_path, shape=(init_width, init_height), shuffle=False,
         transform=transforms.Compose([transforms.ToTensor()]), train=False),
         batch_size=batch_size, shuffle=False, **kwargs)
 
@@ -126,3 +183,18 @@ def main():
     optimizer = optim.SGD(model.parameters(), lr=lr/batch_size,
                           momentum=momentum, dampening=0,
                           weight_decay=decay*batch_size)
+
+    pro_bs = 0
+    for epoch in range(max_epochs):
+        train_loader = DataLoader(dataset.listDataset(
+            train_list_path, shape=(init_width, init_height), shuffle=True,
+            transform=transforms.Compose([transforms.ToTensor()]), train=True,
+            seen=0, batch_size=batch_size, num_workers=num_workers),
+            batch_size=batch_size, shuffle=False, **kwargs)
+        pro_bs = train(model, epoch, train_loader, optimizer, opt, config,
+                       pro_bs, save_dir, save_interval)
+
+
+if __name__ == '__main__':
+
+    main()
