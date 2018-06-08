@@ -1,0 +1,7 @@
+train_num_workers: 10
+lr_change_steps: [-1, 500, 40000, 60000]
+lr_change_scales: [0.1, 10., 0.1, 0.1]
+momentum: 0.9
+decay: 0.0005
+save_interval: 10
+dot_interval: 70
