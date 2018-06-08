@@ -59,10 +59,10 @@ class Reorg(nn.Module):
         assert w % self.stride == 0
         hs = self.stride
         ws = self.stride
-        x = x.view(bs, ch, h/hs, hs, w/ws, ws).transpose(3, 4).contiguous()
-        x = x.view(bs, ch, h/hs*w/ws, hs*ws).transpose(2, 3).contiguous()
-        x = x.view(bs, ch, hs*ws, h/hs, w/ws).transpose(1, 2).contiguous()
-        x = x.view(bs, hs*ws*ch, h/hs, w/ws)
+        x = x.view(bs, ch, h//hs, hs, w//ws, ws).transpose(3, 4).contiguous()
+        x = x.view(bs, ch, h//hs*w//ws, hs*ws).transpose(2, 3).contiguous()
+        x = x.view(bs, ch, hs*ws, h//hs, w//ws).transpose(1, 2).contiguous()
+        x = x.view(bs, hs*ws*ch, h//hs, w//ws)
 
         return x
 
@@ -125,7 +125,7 @@ class Darknet19(nn.Module):
         route_2 = x
         print(route_2.size())
 
-        route_3 = self.reorg27(route_1)
+        route_3 = self.reorg27(self.conv26(route_1))
         x = torch.cat((route_3, route_2), 1)
 
         x = self.conv29(x)
@@ -201,8 +201,6 @@ class Darknet19(nn.Module):
 
             conv_weights = conv_weights.view_as(conv.weight.data)
             conv.weight.data.copy_(conv_weights)
-
-        print('Debug')
 
 
 class Darknet53(nn.Module):
