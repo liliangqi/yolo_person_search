@@ -70,7 +70,7 @@ class Reorg(nn.Module):
 class Darknet19(nn.Module):
     """Darknet19 for Person Search"""
 
-    def __init__(self, pre_model):
+    def __init__(self, pre_model=None):
         super().__init__()
         self.conv0 = Conv(3, 32)
         self.pool1 = nn.MaxPool2d(2, 2)
@@ -105,7 +105,8 @@ class Darknet19(nn.Module):
         self.conv29 = Conv(1280, 1024)
         self.conv30 = nn.Conv2d(1024, 125, 1, 1)  # TODO: change 125 to 25
 
-        self.load_dark_weights(pre_model)
+        if pre_model is not None:
+            self.load_dark_weights(pre_model)
 
     def forward(self, x):
 
@@ -116,14 +117,12 @@ class Darknet19(nn.Module):
         x = self.conv16(self.conv15(self.conv14(self.conv13(self.conv12(
             self.pool11(x))))))
         route_1 = x
-        print(route_1.size())  # TODO: remove this
 
         x = self.conv22(self.conv21(self.conv20(self.conv19(self.conv18(
             self.pool17(x))))))
 
         x = self.conv24(self.conv23(x))
         route_2 = x
-        print(route_2.size())
 
         route_3 = self.reorg27(self.conv26(route_1))
         x = torch.cat((route_3, route_2), 1)
@@ -132,6 +131,10 @@ class Darknet19(nn.Module):
         output = self.conv30(x)
 
         return output
+
+    def load_trained_model(self, state_dict):
+        nn.Module.load_state_dict(
+            self, {k: state_dict[k] for k in list(self.state_dict())})
 
     def load_dark_weights(self, weight_file):
 
