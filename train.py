@@ -3,7 +3,7 @@
 #
 # Author: Liangqi Li
 # Creating Date: May 17, 2018
-# Latest rectified: Jun 8, 2018
+# Latest rectified: Jun 10, 2018
 # ---------------------------------------------------------------
 import os
 import argparse
@@ -19,17 +19,19 @@ from torch.utils.data import DataLoader
 import dataset
 from __init__ import clock_non_return
 from darknet import Darknet19
+from loss import region_loss
+from utils import get_region_boxes, nms, bbox_iou
 
 
 def parse_args():
-    "Parse input arguments"
+    """Parse input arguments"""
 
     parser = argparse.ArgumentParser(description='Training')
     parser.add_argument('--epochs', default=450, type=int)
     parser.add_argument('--bs', default=32, type=int)
     parser.add_argument('--gpu_ids', default='0', type=str)
     parser.add_argument('--data_dir', default='', type=str)
-    parser.add_argument('--lr', default=0.001, type=float)
+    parser.add_argument('--lr', default=0.0001, type=float)
     parser.add_argument('--optimizer', default='SGD', type=str)
     parser.add_argument('--out_dir', default='./output', type=str)
     parser.add_argument('--pre_model', default='', type=str)
@@ -97,7 +99,8 @@ def train(model, epoch, train_loader, optimizer, opt, config, pro_bs,
         data = data.cuda()
         data, target = Variable(data), Variable(target)
         optimizer.zero_grad()
-        loss = model(data)
+        output = model(data)
+        loss = region_loss(output, target, config)
         loss.backward()
         optimizer.step()
 
@@ -108,6 +111,62 @@ def train(model, epoch, train_loader, optimizer, opt, config, pro_bs,
             torch.save(model.state_dict(), save_name)
 
     return pro_bs
+
+
+def test(model, test_loader, config):
+    """Test the model during training"""
+
+    def truths_length(truth):
+        for k in range(50):
+            if truth[k][1] == 0:
+                return k
+
+    model.eval()
+    num_classes = config['num_classes']
+    anchors = config['anchors']
+    num_anchors = len(anchors) // 2
+    conf_thresh = config['conf_thresh']
+    nms_thresh = config['nms_thresh']
+    iou_thresh = config['iou_thresh']
+    eps = 1e-5
+    total = 0.
+    proposals = 0.
+    correct = 0.
+
+    for batch_idx, (data, target) in enumerate(test_loader):
+        data = data.cuda()
+        data = Variable(data, volatile=True)
+        output = model(data).data
+        all_boxes = get_region_boxes(output, conf_thresh, num_classes, anchors,
+                                     num_anchors)
+        for i in range(output.size(0)):
+            boxes = all_boxes[i]
+            boxes = nms(boxes, nms_thresh)
+            truths = target[i].view(-1, 5)
+            num_gts = truths_length(truths)
+
+            total += num_gts
+            for l in range(len(boxes)):
+                if boxes[l][4] > conf_thresh:
+                    proposals += 1
+            for l in range(num_gts):
+                box_gt = [truths[l][1], truths[l][2], truths[l][3],
+                          truths[l][4], 1., 1., truths[l][0]]
+                best_iou = 0
+                best_j = -1
+                for j in range(len(boxes)):
+                    iou = bbox_iou(box_gt, boxes[j], x1y1x2y2=False)
+                    if iou > best_iou:
+                        best_j = j
+                        best_iou = iou
+                if best_iou > iou_thresh and boxes[best_j][6] == box_gt[6]:
+                    correct += 1
+
+    precision = 1. * correct / (proposals + eps)
+    recall = 1. * correct / (total + eps)
+    fscore = 2. * precision * recall / (precision + recall + eps)
+    print('precision: {}, recall: {}, fscore: {}'.format(
+        precision, recall, fscore))
 
 
 @clock_non_return
@@ -126,7 +185,6 @@ def main():
     train_list_path = os.path.join(anno_dir, train_list)
     test_list_path = os.path.join(anno_dir, test_list)
 
-    num_samples = 5717
     num_workers = config['train_num_workers']
     batch_size = opt.bs
     lr = opt.lr
@@ -136,14 +194,7 @@ def main():
     # Training parameters
     max_epochs = opt.epochs
     seed = int(time.time())
-    eps = 1e-5
     save_interval = 10  # epochs
-    dot_interval = 70  # batches
-
-    # Test parameters
-    conf_thresh = .25
-    nms_thresh = .4
-    iou_thresh = .5
 
     save_dir = opt.out_dir
     print('Trained models will be save to', os.path.abspath(save_dir))
@@ -157,7 +208,6 @@ def main():
 
     init_width = 416
     init_height = 416
-    init_epoch = 0
 
     kwargs = {'num_workers': num_workers, 'pin_memory': True} \
         if use_cuda else {}
@@ -176,7 +226,7 @@ def main():
     params_dict = dict(model.named_parameters())
     params = []
     for key, value in params_dict.items():
-        if key.find('.bn') >= 0 or key.find('.bias') >=0 :
+        if key.find('.bn') >= 0 or key.find('.bias') >= 0:
             params += [{'params': [value], 'weight_decay': 0.}]
         else:
             params += [{'params': [value], 'weight_decay': decay * batch_size}]
@@ -193,6 +243,7 @@ def main():
             batch_size=batch_size, shuffle=False, **kwargs)
         pro_bs = train(model, epoch, train_loader, optimizer, opt, config,
                        pro_bs, save_dir, save_interval)
+        test(model, test_loader, config)
 
 
 if __name__ == '__main__':
