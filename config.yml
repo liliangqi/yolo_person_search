@@ -5,3 +5,16 @@ momentum: 0.9
 decay: 0.0005
 save_interval: 10
 dot_interval: 70
+
+anchors: [1.3221, 1.73145, 3.19275, 4.00944, 5.05587, 8.09892, 9.47112, 4.84053, 11.2364, 10.0071]
+num_classes: 20
+coord_scale: 1.0
+class_scale: 1.0
+noobject_scale: 1.0
+object_scale: 5.0
+sil_thresh: 0.6
+conf_thresh: 0.25
+nms_thresh: 0.4
+iou_thresh: 0.5
+
+class_names: ['aeroplane', 'bicycle', 'bird', 'boat', 'bottle', 'bus', 'car', 'cat', 'chair', 'cow', 'diningtable', 'dog', 'horse', 'motorbike', 'person', 'pottedplant', 'sheep', 'sofa', 'train', 'tvmonitor']
